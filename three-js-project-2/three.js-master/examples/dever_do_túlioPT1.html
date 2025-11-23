@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>three.js webgpu - morph face targets with AI</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body {
+				background-color: #666666;
+				margin: 0;
+				font-family: Arial, sans-serif;
+			}
+			#info {
+				position: absolute;
+				top: 10px;
+				width: 100%;
+				text-align: center;
+				color: white;
+			}
+			#info a {
+				color: #00ffff;
+			}
+			#controls {
+				position: absolute;
+				top: 80px;
+				left: 20px;
+				background: rgba(0, 0, 0, 0.9);
+				padding: 20px;
+				border-radius: 10px;
+				color: white;
+				max-width: 400px;
+				max-height: 85vh;
+				overflow-y: auto;
+			}
+			#controls h3 {
+				margin: 15px 0 10px 0;
+				color: #00ffff;
+				font-size: 16px;
+			}
+			input[type="text"], textarea {
+				width: 100%;
+				padding: 10px;
+				margin: 8px 0;
+				border-radius: 5px;
+				border: 2px solid #00ffff;
+				background: #222;
+				color: white;
+				font-size: 14px;
+				box-sizing: border-box;
+			}
+			textarea {
+				resize: vertical;
+				height: 70px;
+				font-family: Arial, sans-serif;
+			}
+			button {
+				padding: 10px 15px;
+				margin: 5px 5px 5px 0;
+				border: none;
+				border-radius: 5px;
+				background: #00ffff;
+				color: #000;
+				font-weight: bold;
+				cursor: pointer;
+				font-size: 12px;
+			}
+			button:hover {
+				background: #00cccc;
+			}
+			select {
+				width: 100%;
+				padding: 8px;
+				margin: 5px 0 10px 0;
+				border-radius: 5px;
+				background: #222;
+				color: white;
+				border: 2px solid #00ffff;
+			}
+			#status {
+				margin-top: 10px;
+				padding: 10px;
+				background: rgba(0, 255, 255, 0.2);
+				border-radius: 5px;
+				font-size: 12px;
+				min-height: 20px;
+			}
+			.info-box {
+				background: rgba(255, 255, 255, 0.05);
+				padding: 10px;
+				border-radius: 5px;
+				margin-top: 10px;
+				font-size: 10px;
+				color: #aaa;
+				line-height: 1.5;
+			}
+			.divider {
+				margin: 15px 0;
+				padding-top: 15px;
+				border-top: 1px solid rgba(255,255,255,0.1);
+			}
+		</style>
+	</head>
+	<body>
+
+		<div id="info">
+			<a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> webgpu - AI Facial Animation<br/>
+			model by <a href="https://www.bannaflak.com/face-cap" target="_blank" rel="noopener">Face Cap</a>
+		</div>
+
+		<div id="controls">
+			<h3>🎭 Modo 1: Letra = Expressão</h3>
+			<input type="text" id="letterInput" placeholder="Digite letras separadas por vírgula ou 'e' (ex: A, B, C ou A e B e C)">
+			<button onclick="executeLetterExpression()">▶️ Gerar Expressão</button>
+			<button onclick="resetFace()">🔄 Reset</button>
+			
+			<div class="divider"></div>
+			
+			<h3>🗣️ Modo 2: Frase = Fala Fluida (offline)</h3>
+			<!-- IA local em uso; não requer modelo/remoto -->
+			<textarea id="speechInput" placeholder="Digite uma frase completa para simular fala natural...">Olá, como você está?</textarea>
+			<button onclick="startSpeaking()">🎤 Falar Frase</button>
+			<button onclick="stopSpeaking()" id="stopSpeakBtn" style="display:none;">⏹️ Parar</button>
+			
+			<div id="status">Aguardando comandos...</div>
+			
+			<div class="info-box">
+				✅ Executando em modo OFFLINE com IA local (heurística)
+				<br>
+				<strong>Modo 1:</strong> Letra única = letra mapeada para uma expressão (A=feliz, B=surpreso, etc)<br>
+				<strong>Modo 2:</strong> Frase completa = frase é convertida em keyframes para fala fluida<br>
+				📊 Parâmetros capturados: <span id="paramCount">...</span>
+			</div>
+		</div>
+
+		<script type="importmap">
+			{
+				"imports": {
+					"three": "../build/three.webgpu.js",
+					"three/webgpu": "../build/three.webgpu.js",
+					"three/tsl": "../build/three.tsl.js",
+					"three/addons/": "./jsm/"
+				}
+			}
+		</script>
+
+		<script type="module">
+
+			import * as THREE from 'three/webgpu';
+			import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+			import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+			import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+			import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
+			import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+			import { Inspector } from 'three/addons/inspector/Inspector.js';
+
+			// Local offline heuristic "IA" - não é necessária API externa
+			// Usaremos regras simples e mapeamentos para gerar expressões e visemas localmente.
+
+			let mixer, headMesh, influences, morphTargetDictionary;
+			let clock, currentAnimation = null;
+			let allMorphParams = [], isSpeaking = false;
+			let letterExpressionCache = {};
+			let localFaceAI = null;
+			let isAnimatingLetters = false;
+			// Global scale for animation durations. >1 slows animations (10% slower here)
+			let animationDurationScale = 1.1; // 1.0 = normal, 1.1 = 10% slower
+
+			init();
+
+			async function init() {
+				clock = new THREE.Clock();
+				const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 20);
+				camera.position.set(-1.8, 0.8, 3);
+				const scene = new THREE.Scene();
+				const renderer = new THREE.WebGPURenderer({ antialias: true });
+				renderer.setPixelRatio(window.devicePixelRatio);
+				renderer.setSize(window.innerWidth, window.innerHeight);
+				renderer.setAnimationLoop(animate);
+				renderer.toneMapping = THREE.ACESFilmicToneMapping;
+				renderer.inspector = new Inspector();
+				document.body.appendChild(renderer.domElement);
+				await renderer.init();
+
+				const environment = new RoomEnvironment();
+				const pmremGenerator = new THREE.PMREMGenerator(renderer);
+				scene.background = new THREE.Color(0x666666);
+				scene.environment = pmremGenerator.fromScene(environment).texture;
+
+				const ktx2Loader = await new KTX2Loader()
+					.setTranscoderPath('jsm/libs/basis/')
+					.detectSupport(renderer);
+
+				new GLTFLoader()
+					.setKTX2Loader(ktx2Loader)
+					.setMeshoptDecoder(MeshoptDecoder)
+					.load('models/gltf/facecap.glb', (gltf) => {
+						const mesh = gltf.scene.children[0];
+						scene.add(mesh);
+
+						headMesh = mesh.getObjectByName('mesh_2');
+						influences = headMesh.morphTargetInfluences;
+						morphTargetDictionary = headMesh.morphTargetDictionary;
+
+						allMorphParams = Object.keys(morphTargetDictionary).map(key => ({
+							name: key.replace('blendShape1.', ''),
+							index: morphTargetDictionary[key]
+						}));
+
+						console.log('✅ Parâmetros capturados:', allMorphParams.length);
+
+						const gui = renderer.inspector.createParameters('Morph Targets');
+						for (const [key, value] of Object.entries(morphTargetDictionary)) {
+							gui.add(influences, value, 0, 1, 0.01).name(key.replace('blendShape1.', '')).listen();
+						}
+
+						updateStatus('✅ Modelo carregado! ' + allMorphParams.length + ' parâmetros prontos');
+						document.getElementById('paramCount').textContent = allMorphParams.length;
+						// Inicializa IA local com os nomes dos parâmetros
+						localFaceAI = new LocalFaceAI(allMorphParams.map(p => p.name));
+					});
+
+				const controls = new OrbitControls(camera, renderer.domElement);
+				controls.enableDamping = true;
+				controls.minDistance = 2.5;
+				controls.maxDistance = 5;
+				controls.target.set(0, 0.15, -0.2);
+
+				function animate() {
+					renderer.render(scene, camera);
+					controls.update();
+				}
+
+				window.addEventListener('resize', () => {
+					camera.aspect = window.innerWidth / window.innerHeight;
+					camera.updateProjectionMatrix();
+					renderer.setSize(window.innerWidth, window.innerHeight);
+				});
+			}
+
+			function updateStatus(msg) {
+				document.getElementById('status').textContent = msg;
+			}
+
+			// Local heuristic face "AI" to generate expressions and speech keyframes
+			class LocalFaceAI {
+				constructor(paramNames){
+					this.params = new Set(paramNames);
+				}
+
+				_clamp(v){ return Math.max(0, Math.min(1, v)); }
+
+				generateExpressionForLetter(letter){
+					// Simple mapping of letters to moods
+					const presets = {
+						HAPPY: { mouthSmile_L:0.8, mouthSmile_R:0.8, jawOpen:0.05, mouthOpen:0.02, eyeSquint_L:0.15, eyeSquint_R:0.15 },
+						SURPRISED: { jawOpen:0.8, mouthOpen:0.9, eyeWide_L:0.6, eyeWide_R:0.6 },
+						SAD: { mouthSmile_L:0.0, mouthSmile_R:0.0, browInnerUp:0.6, jawOpen:0.02 },
+						ANGRY: { noseSneer_L:0.6, noseSneer_R:0.6, mouthFrown:0.6 }
+					};
+
+					const map = { 'A':'HAPPY','E':'HAPPY','I':'HAPPY','O':'SURPRISED','U':'HAPPY',
+						'B':'SURPRISED','C':'CONFUSED','D':'ANGRY','F':'SAD','G':'SURPRISED','H':'SURPRISED','J':'HAPPY','K':'ANGRY','L':'HAPPY','M':'HAPPY','N':'HAPPY','P':'SURPRISED','Q':'SURPRISED','R':'CONFUSED','S':'SURPRISED','T':'ANGRY','V':'SAD','W':'HAPPY','X':'ANGRY','Y':'HAPPY','Z':'ANGRY' };
+
+					const mood = map[letter] || 'HAPPY';
+					let base = {};
+					if (mood === 'HAPPY') base = presets.HAPPY;
+					else if (mood === 'SURPRISED') base = presets.SURPRISED;
+					else if (mood === 'SAD') base = presets.SAD;
+					else if (mood === 'ANGRY') base = presets.ANGRY || presets.ANGRY;
+					else if (mood === 'CONFUSED') base = { mouthFunnel:0.2, browInnerUp:0.5, mouthOpen:0.1 };
+
+					const expr = {};
+					for (const k in base){
+						if (this.params.has(k)) expr[k] = this._clamp(base[k]);
+					}
+
+					// micro-movements
+					if (this.params.has('mouthOpen')) expr.mouthOpen = this._clamp((expr.mouthOpen || 0) + (Math.random()-0.5)*0.08);
+					if (this.params.has('jawOpen')) expr.jawOpen = this._clamp((expr.jawOpen || 0) + (Math.random()-0.5)*0.06);
+
+					return expr;
+				}
+
+				generateKeyframesForText(text){
+					const frames = [];
+					const vowels = new Set(['A','E','I','O','U','Á','É','Í','Ó','Ú','À','È','Ì','Ò','Ù','Ã','Õ','Â','Ê','Î','Ô','Û','Y']);
+					const tokens = text.toUpperCase().split('');
+					for (let i=0;i<tokens.length;i++){
+						const ch = tokens[i];
+						if (ch === ' '){ frames.push({ duration: 0.08 }); continue; }
+						if (vowels.has(ch)){
+							const frame = {};
+							if (this.params.has('jawOpen')) frame.jawOpen = 0.45 + Math.random()*0.15;
+							if (this.params.has('mouthOpen')) frame.mouthOpen = 0.5 + Math.random()*0.25;
+							frame.duration = 0.09 + Math.random()*0.06;
+							frames.push(frame);
+						} else {
+							const frame = {};
+							if (this.params.has('mouthFunnel')) frame.mouthFunnel = 0.25 + Math.random()*0.25;
+							if (this.params.has('mouthPucker')) frame.mouthPucker = 0.15 + Math.random()*0.25;
+							if (this.params.has('jawOpen')) frame.jawOpen = 0.08 + Math.random()*0.08;
+							frame.duration = 0.06 + Math.random()*0.06;
+							frames.push(frame);
+						}
+					}
+
+					// small smiles distributed
+					for (let i=0;i<frames.length;i+=Math.max(1,Math.floor(frames.length/6))){
+						if (this.params.has('mouthSmile_L') && this.params.has('mouthSmile_R')){
+							frames[i].mouthSmile_L = 0.18;
+							frames[i].mouthSmile_R = 0.18;
+						}
+					}
+
+					return frames;
+				}
+			}
+			// Override: implement local versions (offline) for letter expressions and speech
+			window.executeLetterExpression = async function() {
+				const raw = document.getElementById('letterInput').value.trim().toUpperCase();
+				if (!raw) { updateStatus('⚠️ Digite pelo menos UMA letra!'); return; }
+
+				if (!influences || !allMorphParams.length) { updateStatus('⚠️ Aguarde o modelo carregar!'); return; }
+				if (!localFaceAI) { updateStatus('⚠️ IA local não inicializada ainda.'); return; }
+
+				// Parse input: accept commas, spaces, ' E ' (Portuguese) or 'AND'
+				const letters = (raw.replace(/\band\b/gi, ',').replace(/\be\b/gi, ',').replace(/[^A-Z,]/g, ',')
+					.split(',').map(s=>s.trim()).filter(Boolean).map(s=>s[0]));
+
+				if (!letters.length) { updateStatus('⚠️ Nenhuma letra válida encontrada.'); return; }
+
+				updateStatus(`🎭 Animando sequência: ${letters.join(', ')}`);
+				isAnimatingLetters = true;
+
+				try {
+					for (let i=0;i<letters.length && isAnimatingLetters;i++){
+						const L = letters[i];
+						// generate base expression and apply small random variation per-letter
+						let expr = localFaceAI.generateExpressionForLetter(L);
+						for (const k of Object.keys(expr)){
+							expr[k] = Math.max(0, Math.min(1, expr[k] * (0.85 + Math.random()*0.3) + (Math.random()-0.5)*0.06));
+						}
+						// cache unique per-letter+seed (simple)
+						letterExpressionCache[L+"#"+i] = expr;
+						// animate to expression
+						await animateToExpression(expr, 0.6, true);
+					}
+					// smooth return to rest
+					if (isAnimatingLetters) await animateToExpression({}, 0.5, true);
+					updateStatus('✅ Sequência concluída');
+				} catch (e) {
+					console.error('Erro sequência:', e);
+					updateStatus('❌ Erro: ' + e.message);
+				} finally {
+					isAnimatingLetters = false;
+				}
+			}
+
+			window.startSpeaking = async function() {
+				const text = document.getElementById('speechInput').value.trim();
+				if (!text) { updateStatus('⚠️ Digite uma frase para falar!'); return; }
+				if (!influences || !allMorphParams.length) { updateStatus('⚠️ Aguarde o modelo carregar!'); return; }
+				if (!localFaceAI) { updateStatus('⚠️ IA local não inicializada ainda.'); return; }
+
+				stopSpeaking();
+				isSpeaking = true;
+				document.getElementById('stopSpeakBtn').style.display = 'inline-block';
+				updateStatus('🤖 Gerando fala (IA local) e animando...');
+				try {
+					const keyframes = localFaceAI.generateKeyframesForText(text);
+					for (let i=0;i<keyframes.length && isSpeaking;i++){
+						const frame = keyframes[i];
+						const duration = frame.duration || 0.12;
+						delete frame.duration;
+						await animateToExpression(frame, duration, true);
+					}
+					if (isSpeaking) await animateToExpression({}, 0.5, true);
+					stopSpeaking();
+					updateStatus('✅ Fala concluída (local)!');
+				} catch (e) {
+					console.error('Erro local IA:', e);
+					stopSpeaking();
+					updateStatus('❌ Erro: ' + e.message);
+				}
+			}
+
+			window.stopSpeaking = function() {
+				isSpeaking = false;
+				document.getElementById('stopSpeakBtn').style.display = 'none';
+			}
+
+			window.resetFace = function() {
+				if (!influences) return;
+				// Stop any ongoing animations
+				isAnimatingLetters = false;
+				isSpeaking = false;
+				animateToExpression({}, 0.8);
+				updateStatus('🔄 Face resetada');
+			}
+
+			function animateToExpression(target, duration, isAsync = false) {
+				return new Promise((resolve) => {
+					if (!influences) {
+						resolve();
+						return;
+					}
+
+					if (currentAnimation && !isAsync) {
+						cancelAnimationFrame(currentAnimation);
+					}
+
+					const start = {};
+					for (let i = 0; i < influences.length; i++) {
+						start[i] = influences[i];
+					}
+
+					const startTime = Date.now();
+                    
+					function anim() {
+						const elapsed = (Date.now() - startTime) / 1000;
+						const effectiveDuration = Math.max(0.001, (duration || 0.001) * (typeof animationDurationScale === 'number' ? animationDurationScale : 1));
+						const progress = Math.min(elapsed / effectiveDuration, 1);
+						
+						// Easing suave
+						const eased = progress < 0.5 
+							? 2 * progress * progress 
+							: 1 - Math.pow(-2 * progress + 2, 2) / 2;
+
+						for (let i = 0; i < influences.length; i++) {
+							const targetVal = getTargetValue(i, target);
+							influences[i] = start[i] + (targetVal - start[i]) * eased;
+						}
+
+						if (progress < 1 && (isAsync ? (isSpeaking || isAnimatingLetters) : true)) {
+							currentAnimation = requestAnimationFrame(anim);
+						} else {
+							resolve();
+						}
+					}
+					
+					anim();
+				});
+			}
+
+			function getTargetValue(index, expression) {
+				const param = allMorphParams.find(p => p.index === index);
+				if (!param) return 0;
+				return expression[param.name] || 0;
+			}
+
+		</script>
+	</body>
+</html>

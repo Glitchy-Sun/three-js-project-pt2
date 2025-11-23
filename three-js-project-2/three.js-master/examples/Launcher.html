@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project Launcher - Three.js Hub</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 900px;
+            width: 100%;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 50px;
+        }
+
+        .header h1 {
+            color: #333;
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: #666;
+            font-size: 16px;
+        }
+
+        .info-card {
+            background: #f0f4ff;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            font-size: 14px;
+            color: #333;
+        }
+
+        .info-card strong {
+            color: #667eea;
+        }
+
+        .projects-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 30px;
+            margin-bottom: 40px;
+        }
+
+        .project-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 15px;
+            padding: 30px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            color: white;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .project-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.1);
+            transition: left 0.3s ease;
+        }
+
+        .project-card:hover {
+            transform: translateY(-10px);
+            box-shadow: 0 15px 40px rgba(102, 126, 234, 0.4);
+        }
+
+        .project-card:hover::before {
+            left: 100%;
+        }
+
+        .project-card.selected {
+            border: 3px solid #4CAF50;
+            box-shadow: 0 0 20px rgba(76, 175, 80, 0.6);
+        }
+
+        .project-content {
+            position: relative;
+            z-index: 1;
+        }
+
+        .project-number {
+            font-size: 14px;
+            opacity: 0.8;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 10px;
+        }
+
+        .project-card h2 {
+            font-size: 24px;
+            margin-bottom: 15px;
+        }
+
+        .project-card p {
+            font-size: 14px;
+            opacity: 0.9;
+            line-height: 1.6;
+            margin-bottom: 20px;
+        }
+
+        .selection-indicator {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 2px solid white;
+            background: transparent;
+            transition: all 0.3s ease;
+        }
+
+        .project-card.selected .selection-indicator {
+            background: #4CAF50;
+            border-color: #4CAF50;
+        }
+
+        .actions {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        button {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .btn-launch {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .btn-launch:hover {
+            background: #45a049;
+            transform: scale(1.05);
+        }
+
+        .btn-launch:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: scale(1);
+        }
+
+        .btn-reset {
+            background: #f44336;
+            color: white;
+        }
+
+        .btn-reset:hover {
+            background: #da190b;
+            transform: scale(1.05);
+        }
+
+        .status-message {
+            text-align: center;
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 14px;
+            min-height: 20px;
+        }
+
+        .status-message.success {
+            background: #c8e6c9;
+            color: #2e7d32;
+        }
+
+        .status-message.info {
+            background: #bbdefb;
+            color: #1565c0;
+        }
+
+        .status-message.warning {
+            background: #fff9c4;
+            color: #f57f17;
+        }
+
+        .execution-queue {
+            margin-top: 30px;
+            padding-top: 30px;
+            border-top: 2px solid #eee;
+        }
+
+        .queue-title {
+            color: #333;
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 20px;
+        }
+
+        .queue-item {
+            display: flex;
+            align-items: center;
+            padding: 12px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+
+        .queue-number {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background: #667eea;
+            color: white;
+            font-weight: bold;
+            margin-right: 15px;
+        }
+
+        .queue-name {
+            flex: 1;
+            color: #333;
+            font-weight: 500;
+        }
+
+        .setup-steps {
+            background: #fffde7;
+            border: 2px solid #fbc02d;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+
+        .setup-steps h3 {
+            color: #f57f17;
+            margin-bottom: 15px;
+        }
+
+        .setup-steps ol {
+            margin-left: 20px;
+            color: #666;
+            line-height: 1.8;
+        }
+
+        .setup-steps li {
+            margin-bottom: 10px;
+        }
+
+        .setup-steps code {
+            background: #fff;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            color: #d32f2f;
+        }
+
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 24px;
+            }
+
+            .projects-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .container {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Three.js Project Hub</h1>
+            <p>Gerenciador de Projetos Local</p>
+        </div>
+
+        <div class="info-card">
+            <strong>ℹ️ Importante:</strong> Os projetos serão abertos em novas abas do navegador. Certifique-se de que todas as dependências (modelos 3D, texturas, scripts) estão nas pastas corretas de cada projeto.
+        </div>
+
+        <div class="projects-grid">
+            <div class="project-card" onclick="selectProject(1)">
+                <div class="project-content">
+                    <div class="project-number">Projeto 1</div>
+                    <h2>Three.js Project 1</h2>
+                    <p>Animação Facial com Morphs e Expressões - Parte 1</p>
+                    <p style="font-size: 12px; opacity: 0.7;">dever_do_túlioPT1.html</p>
+                    <div class="selection-indicator"></div>
+                </div>
+            </div>
+
+            <div class="project-card" onclick="selectProject(2)">
+                <div class="project-content">
+                    <div class="project-number">Projeto 2</div>
+                    <h2>Three.js Project 2</h2>
+                    <p>Animação Facial com Síntese de Voz - Parte 2</p>
+                    <p style="font-size: 12px; opacity: 0.7;">dever_do_túlio.html</p>
+                    <div class="selection-indicator"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="actions">
+            <button class="btn-launch" onclick="launchProjects()">▶️ Executar Sequência</button>
+            <button class="btn-reset" onclick="resetSelection()">🔄 Limpar Seleção</button>
+        </div>
+
+        <div class="status-message" id="statusMessage"></div>
+
+        <div class="execution-queue">
+            <div class="queue-title">📋 Ordem de Execução</div>
+            <div id="queueContainer"></div>
+        </div>
+    </div>
+
+    <script>
+        let selectedProjects = [];
+        
+        // Configure os caminhos dos seus projetos aqui
+        const projectPaths = {
+           1: 'dever_do_túlio.html',
+           2: 'dever_do_túlio-PT1.html'
+        };
+
+        function selectProject(projectNumber) {
+            const cards = document.querySelectorAll('.project-card');
+            const card = cards[projectNumber - 1];
+
+            const index = selectedProjects.indexOf(projectNumber);
+            if (index > -1) {
+                selectedProjects.splice(index, 1);
+                card.classList.remove('selected');
+            } else {
+                selectedProjects.push(projectNumber);
+                card.classList.add('selected');
+            }
+
+            updateQueue();
+            updateStatus();
+        }
+
+        function updateQueue() {
+            const container = document.getElementById('queueContainer');
+            
+            if (selectedProjects.length === 0) {
+                container.innerHTML = '<p style="color: #999; text-align: center;">Nenhum projeto selecionado</p>';
+                return;
+            }
+
+            container.innerHTML = selectedProjects.map((proj, index) => `
+                <div class="queue-item">
+                    <div class="queue-number">${index + 1}</div>
+                    <div class="queue-name">Three.js Project ${proj}</div>
+                    ${index < selectedProjects.length - 1 ? '<span style="margin-left: auto; color: #667eea; font-size: 20px;">↓</span>' : '<span style="margin-left: auto; color: #4CAF50; font-weight: bold;">✓ Final</span>'}
+                </div>
+            `).join('');
+        }
+
+        function updateStatus() {
+            const msg = document.getElementById('statusMessage');
+            const button = document.querySelector('.btn-launch');
+
+            if (selectedProjects.length === 0) {
+                msg.className = 'status-message';
+                msg.textContent = '';
+                button.disabled = true;
+            } else if (selectedProjects.length === 1) {
+                msg.className = 'status-message info';
+                msg.textContent = `✓ 1 projeto selecionado. Clique em "Executar Sequência" para iniciar.`;
+                button.disabled = false;
+            } else {
+                msg.className = 'status-message info';
+                msg.textContent = `✓ ${selectedProjects.length} projetos selecionados. Serão abertos em sequência.`;
+                button.disabled = false;
+            }
+        }
+
+        function launchProjects() {
+            const msg = document.getElementById('statusMessage');
+            
+            if (selectedProjects.length === 0) {
+                msg.className = 'status-message warning';
+                msg.textContent = '⚠️ Selecione pelo menos um projeto!';
+                return;
+            }
+
+            msg.className = 'status-message success';
+            msg.textContent = `🎉 Abrindo projetos na ordem: ${selectedProjects.map(p => `Projeto ${p}`).join(' → ')}`;
+
+            selectedProjects.forEach((projectNum, index) => {
+                setTimeout(() => {
+                    const path = projectPaths[projectNum];
+                    if (path) {
+                        window.open(path, `projeto${projectNum}_${Date.now()}`);
+                        console.log(`✓ Abrindo: ${path}`);
+                    } else {
+                        console.error(`❌ Caminho não encontrado para projeto ${projectNum}`);
+                    }
+                }, index * 500); // Abre com 500ms de intervalo entre eles
+            });
+        }
+
+        function resetSelection() {
+            selectedProjects = [];
+            document.querySelectorAll('.project-card').forEach(card => {
+                card.classList.remove('selected');
+            });
+            updateQueue();
+            updateStatus();
+
+            const msg = document.getElementById('statusMessage');
+            msg.className = 'status-message';
+            msg.textContent = '';
+        }
+
+        updateQueue();
+    </script>
+</body>
+</html>

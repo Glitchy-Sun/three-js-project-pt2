@@ -123,7 +123,12 @@
 			<div style="margin-top:8px;">
 				<label style="font-size:12px;display:block;margin-bottom:6px;color:#00ffff;">Voz:</label>
 				<select id="voiceSelect"></select>
-				<button onclick="testVoice()" style="margin-top:6px;">🔊 Testar Voz</button>
+				<div style="margin-top:10px;">
+					<label style="font-size:12px;display:block;margin-bottom:6px;color:#00ffff;">Fluidez da face: <span id="fluencyValue">0.90</span></label>
+					<input id="fluencyRange" type="range" min="50" max="100" value="90" style="width:100%" oninput="updateFluencyFromSlider(this.value)">
+					<button onclick="autoCalibrate()" style="margin-top:8px;display:block;">⚙️ Auto-calibrar</button>
+					<div style="font-size:11px;color:#aaa;margin-top:6px;">Calibração de taxa: <span id="calibValue">1.00</span></div>
+				</div>
 			</div>
 			
 			<div id="status">Aguardando comandos...</div>
@@ -166,6 +171,10 @@
 			let allMorphParams = [], isSpeaking = false;
 			let synth = window.speechSynthesis;
 			let availableVoices = [];
+			// Calibration multiplier for speech rate (measured): multiplies estimated durations
+			let speechRateCalibration = 1.0;
+			// Face fluency weight (0.0..1.0) — higher = smoother, less exaggerated
+			let faceFluency = 0.9;
 			let letterExpressionCache = {};
 			let localFaceAI = null;
 			let isAnimatingLetters = false;
@@ -359,6 +368,11 @@
 					const words = text.split(/\s+/);
 					for (let w of words){
 						if (!w) { frames.push({ duration: 0.06 }); continue; }
+						// If token is only punctuation, insert a rest (closed mouth) pause
+						if (w.match(/^[^\p{L}\p{N}]+$/u)){
+							frames.push({ duration: 0.12, jawOpen:0, mouthOpen:0, mouthPucker:0, mouthFunnel:0 });
+							continue;
+						}
 						const sylls = syllabify(w);
 						if (!sylls.length) { frames.push({ duration: 0.06 }); continue; }
 						for (let s of sylls){
@@ -401,8 +415,13 @@
 								for (const k in vis) f[k] = vis[k];
 								frames.push(f);
 						}
-						// small pause between words
-						frames.push({ duration: 0.04 });
+								// small pause between words — if original token ended with sentence punctuation, make a slightly longer closed-mouth pause
+								const trailPunct = w.match(/[.!?]$/);
+								if (trailPunct) {
+									frames.push({ duration: 0.18, jawOpen:0, mouthOpen:0, mouthPucker:0, mouthFunnel:0 });
+								} else {
+									frames.push({ duration: 0.04, jawOpen:0, mouthOpen:0 });
+								}
 					}
 					return frames;
 				}
@@ -468,8 +487,10 @@
 				const estimatedDefaultSpeechDuration = Math.max(0.5, text.replace(/\s+/g,'').length * 0.06);
 				const utter = new SpeechSynthesisUtterance(text);
 				// Adjust rate so that spoken audio roughly matches animation duration
-				let desiredRate = estimatedDefaultSpeechDuration / Math.max(0.001, totalAnimDuration);
-				// clamp to reasonable range
+				// apply calibration factor measured by autoCalibrate
+				let desiredRate = (estimatedDefaultSpeechDuration * (speechRateCalibration || 1.0)) / Math.max(0.001, totalAnimDuration);
+				// Increase speed by 10% and clamp to reasonable range
+				desiredRate = desiredRate * 1.10;
 				desiredRate = Math.max(0.5, Math.min(2.0, desiredRate));
 				utter.rate = desiredRate;
 				utter.pitch = 1.0;
@@ -556,6 +577,11 @@
 					sel.appendChild(opt);
 				});
 				if (availableVoices.length) updateStatus('🔊 Voz pronta: ' + availableVoices[0].name);
+				// initialize UI values if present
+				const fv = document.getElementById('fluencyValue');
+				if (fv) fv.textContent = faceFluency.toFixed(2);
+				const cv = document.getElementById('calibValue');
+				if (cv) cv.textContent = speechRateCalibration.toFixed(2);
 			}
 
 			function testVoice(){
@@ -564,8 +590,71 @@
 				const txt = 'Teste de voz. Este é um exemplo de fala.';
 				const utter = new SpeechSynthesisUtterance(txt);
 				if (sel && sel.value !== undefined && availableVoices[sel.value]) utter.voice = availableVoices[sel.value];
+				// make test slightly faster (+10%)
+				utter.rate = 1.10;
 				speechSynthesis.cancel();
 				speechSynthesis.speak(utter);
+			}
+
+			function updateFluencyFromSlider(v){
+				const val = Math.max(50, Math.min(100, Number(v)));
+				faceFluency = val / 100;
+				document.getElementById('fluencyValue').textContent = faceFluency.toFixed(2);
+			}
+
+			async function autoCalibrate(){
+				if (!localFaceAI) { updateStatus('⚠️ IA local não inicializada.'); return; }
+				updateStatus('⚙️ Executando auto-calibração...');
+				const testText = 'Calibração de tempo. Este é um teste.';
+				const keyframes = localFaceAI.generateSyllableKeyframesForText(testText);
+				const totalAnimDuration = keyframes.reduce((s,f)=>s + (f.duration||0.08), 0);
+				const estimatedDefaultSpeechDuration = Math.max(0.5, testText.replace(/\s+/g,'').length * 0.06);
+				let utter = new SpeechSynthesisUtterance(testText);
+				const sel = document.getElementById('voiceSelect');
+				if (sel && sel.value !== undefined && availableVoices[sel.value]) utter.voice = availableVoices[sel.value];
+				utter.rate = 1.0;
+				let startTime = 0, endTime = 0;
+				utter.onstart = () => { startTime = Date.now(); };
+				utter.onend = () => { endTime = Date.now(); };
+
+				// Speak and animate concurrently
+				try {
+					stopSpeaking();
+					isSpeaking = true;
+					document.getElementById('stopSpeakBtn').style.display = 'inline-block';
+					speechSynthesis.cancel();
+					speechSynthesis.speak(utter);
+					for (let i=0;i<keyframes.length && isSpeaking;i++){
+						const frame = keyframes[i];
+						const duration = frame.duration || 0.12;
+						delete frame.duration;
+						await animateToExpression(frame, duration, true);
+					}
+					if (isSpeaking) await animateToExpression({}, 0.2, true);
+				} catch (e) {
+					console.warn('autoCalibrate error', e);
+				}
+				// ensure speech ended
+				const waited = await new Promise(resolve => {
+					const timeout = setInterval(()=>{
+						if (endTime) { clearInterval(timeout); resolve(true); }
+					}, 50);
+					// safety timeout
+					setTimeout(()=>{ clearInterval(timeout); resolve(false); }, 4000);
+				});
+				if (!startTime || !endTime) {
+					updateStatus('❌ Auto-calibração falhou (tempo não detectado).');
+					isSpeaking = false;
+					document.getElementById('stopSpeakBtn').style.display = 'none';
+					return;
+				}
+				const speechDuration = (endTime - startTime) / 1000;
+				// calibration factor to scale estimatedDefaultSpeechDuration to measured speechDuration
+				speechRateCalibration = speechDuration / Math.max(0.001, estimatedDefaultSpeechDuration);
+				document.getElementById('calibValue').textContent = speechRateCalibration.toFixed(2);
+				updateStatus('✅ Auto-calibração concluída: fator=' + speechRateCalibration.toFixed(2));
+				isSpeaking = false;
+				document.getElementById('stopSpeakBtn').style.display = 'none';
 			}
 
 			// Heuristic viseme mapping: estimate viseme values from a word
@@ -608,8 +697,9 @@
 					accum.mouthSmile_L = Math.max(accum.mouthSmile_L || 0, 0.12);
 					accum.mouthSmile_R = Math.max(accum.mouthSmile_R || 0, 0.12);
 				}
-				// Apply a mild dampening to avoid exaggerated shapes
-				const damp = 0.72;
+				// Apply a mild dampening to avoid exaggerated shapes. Adjust by faceFluency.
+				const dampBase = 0.72;
+				const damp = Math.max(0.45, Math.min(0.95, dampBase + (1 - faceFluency) * 0.12));
 				for (const k in accum){
 					// keep smile values subtle
 					if (k === 'mouthSmile_L' || k === 'mouthSmile_R') accum[k] = Math.min(0.18, accum[k] * 0.9);
@@ -657,10 +747,12 @@
 					}
 
 					const startTime = Date.now();
-                    
+
 					function anim() {
 						const elapsed = (Date.now() - startTime) / 1000;
-						const effectiveDuration = Math.max(0.001, (duration || 0.001) * (typeof animationDurationScale === 'number' ? animationDurationScale : 1));
+						// Apply faceFluency to smooth transitions: higher fluency -> slightly slower, smoother interpolations
+						const fluencyAdj = 1 + (1 - faceFluency) * 0.3;
+						const effectiveDuration = Math.max(0.001, (duration || 0.001) * (typeof animationDurationScale === 'number' ? animationDurationScale : 1) * fluencyAdj);
 						const progress = Math.min(elapsed / effectiveDuration, 1);
 						
 						// Easing suave
