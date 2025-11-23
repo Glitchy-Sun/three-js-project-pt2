@@ -126,7 +126,6 @@
 				<div style="margin-top:10px;">
 					<label style="font-size:12px;display:block;margin-bottom:6px;color:#00ffff;">Fluidez da face: <span id="fluencyValue">0.90</span></label>
 					<input id="fluencyRange" type="range" min="50" max="100" value="90" style="width:100%" oninput="updateFluencyFromSlider(this.value)">
-					<button onclick="autoCalibrate()" style="margin-top:8px;display:block;">⚙️ Auto-calibrar</button>
 					<div style="font-size:11px;color:#aaa;margin-top:6px;">Calibração de taxa: <span id="calibValue">1.00</span></div>
 				</div>
 			</div>
@@ -370,7 +369,8 @@
 						if (!w) { frames.push({ duration: 0.06 }); continue; }
 						// If token is only punctuation, insert a rest (closed mouth) pause
 						if (w.match(/^[^\p{L}\p{N}]+$/u)){
-							frames.push({ duration: 0.12, jawOpen:0, mouthOpen:0, mouthPucker:0, mouthFunnel:0 });
+							// pure punctuation token: add a closed-mouth pause (no animation, immediate)
+							frames.push({ duration: 0.12, jawOpen:0, mouthOpen:0, mouthPucker:0, mouthFunnel:0, pause:true });
 							continue;
 						}
 						const sylls = syllabify(w);
@@ -418,7 +418,8 @@
 								// small pause between words — if original token ended with sentence punctuation, make a slightly longer closed-mouth pause
 								const trailPunct = w.match(/[.!?]$/);
 								if (trailPunct) {
-									frames.push({ duration: 0.18, jawOpen:0, mouthOpen:0, mouthPucker:0, mouthFunnel:0 });
+									// sentence-ending punctuation: ensure closed-mouth pause (immediate, no interpolate)
+									frames.push({ duration: 0.18, jawOpen:0, mouthOpen:0, mouthPucker:0, mouthFunnel:0, pause:true });
 								} else {
 									frames.push({ duration: 0.04, jawOpen:0, mouthOpen:0 });
 								}
@@ -536,6 +537,14 @@
 					for (let i=0;i<keyframes.length && isSpeaking;i++){
 						const frame = keyframes[i];
 						const duration = frame.duration || 0.12;
+						// handle pause frames (punctuation) immediately without interpolation
+						if (frame.pause) {
+							// set closed-mouth targets immediately
+							setExpressionImmediate({ jawOpen:0, mouthOpen:0, mouthPucker:0, mouthFunnel:0 });
+							// wait for duration
+							await new Promise(r=>setTimeout(r, Math.max(10, Math.round(duration*1000))));
+							continue;
+						}
 						// remove duration before applying
 						delete frame.duration;
 						await animateToExpression(frame, duration, true);
@@ -713,12 +722,21 @@
 				if (!influences || !localFaceAI) return;
 				const vis = aggregateVisemeForWord(word);
 				// slightly randomize intensity for naturalness
-				for (const k in vis) vis[k] = Math.max(0, Math.min(1, vis[k] * (0.85 + Math.random()*0.3)));
+				for (const k in vis) vis[k] = Math.max(0, Math.min(1, vis[k] * (0.85 + Math.random()*0.2)));
 				// animate to viseme and then slightly relax
 				(async function(){
 					await animateToExpression(vis, duration * 0.95, true);
 					if (isSpeaking) await animateToExpression({}, Math.max(0.04, duration * 0.3), true);
 				})();
+			}
+
+			function setExpressionImmediate(target){
+				if (!influences) return;
+				for (let i = 0; i < influences.length; i++){
+					const param = allMorphParams.find(p => p.index === i);
+					const val = param ? (target[param.name] || 0) : 0;
+					influences[i] = val;
+				}
 			}
 
 			window.resetFace = function() {
