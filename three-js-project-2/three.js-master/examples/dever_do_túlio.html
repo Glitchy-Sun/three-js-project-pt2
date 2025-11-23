@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>three.js webgpu - morph face targets with AI</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body {
+				background-color: #666666;
+				margin: 0;
+				font-family: Arial, sans-serif;
+			}
+			#info {
+				position: absolute;
+				top: 10px;
+				width: 100%;
+				text-align: center;
+				color: white;
+			}
+			#info a {
+				color: #00ffff;
+			}
+			#controls {
+				position: absolute;
+				top: 80px;
+				left: 20px;
+				background: rgba(0, 0, 0, 0.9);
+				padding: 20px;
+				border-radius: 10px;
+				color: white;
+				max-width: 400px;
+				max-height: 85vh;
+				overflow-y: auto;
+			}
+			#controls h3 {
+				margin: 15px 0 10px 0;
+				color: #00ffff;
+				font-size: 16px;
+			}
+			input[type="text"], textarea {
+				width: 100%;
+				padding: 10px;
+				margin: 8px 0;
+				border-radius: 5px;
+				border: 2px solid #00ffff;
+				background: #222;
+				color: white;
+				font-size: 14px;
+				box-sizing: border-box;
+			}
+			textarea {
+				resize: vertical;
+				height: 70px;
+				font-family: Arial, sans-serif;
+			}
+			button {
+				padding: 10px 15px;
+				margin: 5px 5px 5px 0;
+				border: none;
+				border-radius: 5px;
+				background: #00ffff;
+				color: #000;
+				font-weight: bold;
+				cursor: pointer;
+				font-size: 12px;
+			}
+			button:hover {
+				background: #00cccc;
+			}
+			select {
+				width: 100%;
+				padding: 8px;
+				margin: 5px 0 10px 0;
+				border-radius: 5px;
+				background: #222;
+				color: white;
+				border: 2px solid #00ffff;
+			}
+			#status {
+				margin-top: 10px;
+				padding: 10px;
+				background: rgba(0, 255, 255, 0.2);
+				border-radius: 5px;
+				font-size: 12px;
+				min-height: 20px;
+			}
+			.info-box {
+				background: rgba(255, 255, 255, 0.05);
+				padding: 10px;
+				border-radius: 5px;
+				margin-top: 10px;
+				font-size: 10px;
+				color: #aaa;
+				line-height: 1.5;
+			}
+			.divider {
+				margin: 15px 0;
+				padding-top: 15px;
+				border-top: 1px solid rgba(255,255,255,0.1);
+			}
+		</style>
+	</head>
+	<body>
+
+		<div id="info">
+			<a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> webgpu - AI Facial Animation<br/>
+			model by <a href="https://www.bannaflak.com/face-cap" target="_blank" rel="noopener">Face Cap</a>
+		</div>
+
+		<div id="controls">
+			<h3>🎭 Modo 1: Letra = Expressão</h3>
+			<input type="text" id="letterInput" placeholder="Digite letras separadas por vírgula ou 'e' (ex: A, B, C ou A e B e C)">
+			<button onclick="executeLetterExpression()">▶️ Gerar Expressão</button>
+			<button onclick="resetFace()">🔄 Reset</button>
+			
+			<div class="divider"></div>
+			
+			<h3>🗣️ Modo 2: Frase = Fala Fluida (offline)</h3>
+			<!-- IA local em uso; não requer modelo/remoto -->
+			<textarea id="speechInput" placeholder="Digite uma frase completa para simular fala natural...">Olá, como você está?</textarea>
+			<button onclick="startSpeaking()">🎤 Falar Frase</button>
+			<button onclick="stopSpeaking()" id="stopSpeakBtn" style="display:none;">⏹️ Parar</button>
+			<div style="margin-top:8px;">
+				<label style="font-size:12px;display:block;margin-bottom:6px;color:#00ffff;">Voz:</label>
+				<select id="voiceSelect"></select>
+				<button onclick="testVoice()" style="margin-top:6px;">🔊 Testar Voz</button>
+			</div>
+			
+			<div id="status">Aguardando comandos...</div>
+			
+			<div class="info-box">
+				✅ Executando em modo OFFLINE com IA local (heurística)
+				<br>
+				<strong>Modo 1:</strong> Letra única = letra mapeada para uma expressão (A=feliz, B=surpreso, etc)<br>
+				<strong>Modo 2:</strong> Frase completa = frase é convertida em keyframes para fala fluida<br>
+				📊 Parâmetros capturados: <span id="paramCount">...</span>
+			</div>
+		</div>
+
+		<script type="importmap">
+			{
+				"imports": {
+					"three": "../build/three.webgpu.js",
+					"three/webgpu": "../build/three.webgpu.js",
+					"three/tsl": "../build/three.tsl.js",
+					"three/addons/": "./jsm/"
+				}
+			}
+		</script>
+
+		<script type="module">
+
+			import * as THREE from 'three/webgpu';
+			import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+			import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+			import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+			import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
+			import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+			import { Inspector } from 'three/addons/inspector/Inspector.js';
+
+			// Local offline heuristic "IA" - não é necessária API externa
+			// Usaremos regras simples e mapeamentos para gerar expressões e visemas localmente.
+
+			let mixer, headMesh, influences, morphTargetDictionary;
+			let clock, currentAnimation = null;
+			let allMorphParams = [], isSpeaking = false;
+			let synth = window.speechSynthesis;
+			let availableVoices = [];
+			let letterExpressionCache = {};
+			let localFaceAI = null;
+			let isAnimatingLetters = false;
+			// Global scale for animation durations. >1 slows animations (10% slower here)
+			let animationDurationScale = 1.1; // 1.0 = normal, 1.1 = 10% slower
+
+			init();
+
+			async function init() {
+				clock = new THREE.Clock();
+				const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 20);
+				camera.position.set(-1.8, 0.8, 3);
+				const scene = new THREE.Scene();
+				const renderer = new THREE.WebGPURenderer({ antialias: true });
+				renderer.setPixelRatio(window.devicePixelRatio);
+				renderer.setSize(window.innerWidth, window.innerHeight);
+				renderer.setAnimationLoop(animate);
+				renderer.toneMapping = THREE.ACESFilmicToneMapping;
+				renderer.inspector = new Inspector();
+				document.body.appendChild(renderer.domElement);
+				await renderer.init();
+
+				const environment = new RoomEnvironment();
+				const pmremGenerator = new THREE.PMREMGenerator(renderer);
+				scene.background = new THREE.Color(0x666666);
+				scene.environment = pmremGenerator.fromScene(environment).texture;
+
+				const ktx2Loader = await new KTX2Loader()
+					.setTranscoderPath('jsm/libs/basis/')
+					.detectSupport(renderer);
+
+				new GLTFLoader()
+					.setKTX2Loader(ktx2Loader)
+					.setMeshoptDecoder(MeshoptDecoder)
+					.load('models/gltf/facecap.glb', (gltf) => {
+						const mesh = gltf.scene.children[0];
+						scene.add(mesh);
+
+						headMesh = mesh.getObjectByName('mesh_2');
+						influences = headMesh.morphTargetInfluences;
+						morphTargetDictionary = headMesh.morphTargetDictionary;
+
+						allMorphParams = Object.keys(morphTargetDictionary).map(key => ({
+							name: key.replace('blendShape1.', ''),
+							index: morphTargetDictionary[key]
+						}));
+
+						console.log('✅ Parâmetros capturados:', allMorphParams.length);
+
+						const gui = renderer.inspector.createParameters('Morph Targets');
+						for (const [key, value] of Object.entries(morphTargetDictionary)) {
+							gui.add(influences, value, 0, 1, 0.01).name(key.replace('blendShape1.', '')).listen();
+						}
+
+						updateStatus('✅ Modelo carregado! ' + allMorphParams.length + ' parâmetros prontos');
+						document.getElementById('paramCount').textContent = allMorphParams.length;
+						// Inicializa IA local com os nomes dos parâmetros
+						localFaceAI = new LocalFaceAI(allMorphParams.map(p => p.name));
+						// Populate speech synthesis voices
+						populateVoiceList();
+					});
+
+				const controls = new OrbitControls(camera, renderer.domElement);
+				controls.enableDamping = true;
+				controls.minDistance = 2.5;
+				controls.maxDistance = 5;
+				controls.target.set(0, 0.15, -0.2);
+
+				function animate() {
+					renderer.render(scene, camera);
+					controls.update();
+				}
+
+				window.addEventListener('resize', () => {
+					camera.aspect = window.innerWidth / window.innerHeight;
+					camera.updateProjectionMatrix();
+					renderer.setSize(window.innerWidth, window.innerHeight);
+				});
+			}
+
+			function updateStatus(msg) {
+				document.getElementById('status').textContent = msg;
+			}
+
+			// Local heuristic face "AI" to generate expressions and speech keyframes
+			class LocalFaceAI {
+				constructor(paramNames){
+					this.params = new Set(paramNames);
+				}
+
+				_clamp(v){ return Math.max(0, Math.min(1, v)); }
+
+				generateExpressionForLetter(letter){
+					// Simple mapping of letters to moods
+					const presets = {
+						HAPPY: { mouthSmile_L:0.8, mouthSmile_R:0.8, jawOpen:0.05, mouthOpen:0.02, eyeSquint_L:0.15, eyeSquint_R:0.15 },
+						SURPRISED: { jawOpen:0.8, mouthOpen:0.9, eyeWide_L:0.6, eyeWide_R:0.6 },
+						SAD: { mouthSmile_L:0.0, mouthSmile_R:0.0, browInnerUp:0.6, jawOpen:0.02 },
+						ANGRY: { noseSneer_L:0.6, noseSneer_R:0.6, mouthFrown:0.6 }
+					};
+
+					const map = { 'A':'HAPPY','E':'HAPPY','I':'HAPPY','O':'SURPRISED','U':'HAPPY',
+						'B':'SURPRISED','C':'CONFUSED','D':'ANGRY','F':'SAD','G':'SURPRISED','H':'SURPRISED','J':'HAPPY','K':'ANGRY','L':'HAPPY','M':'HAPPY','N':'HAPPY','P':'SURPRISED','Q':'SURPRISED','R':'CONFUSED','S':'SURPRISED','T':'ANGRY','V':'SAD','W':'HAPPY','X':'ANGRY','Y':'HAPPY','Z':'ANGRY' };
+
+					const mood = map[letter] || 'HAPPY';
+					let base = {};
+					if (mood === 'HAPPY') base = presets.HAPPY;
+					else if (mood === 'SURPRISED') base = presets.SURPRISED;
+					else if (mood === 'SAD') base = presets.SAD;
+					else if (mood === 'ANGRY') base = presets.ANGRY || presets.ANGRY;
+					else if (mood === 'CONFUSED') base = { mouthFunnel:0.2, browInnerUp:0.5, mouthOpen:0.1 };
+
+					const expr = {};
+					for (const k in base){
+						if (this.params.has(k)) expr[k] = this._clamp(base[k]);
+					}
+
+					// micro-movements
+					if (this.params.has('mouthOpen')) expr.mouthOpen = this._clamp((expr.mouthOpen || 0) + (Math.random()-0.5)*0.08);
+					if (this.params.has('jawOpen')) expr.jawOpen = this._clamp((expr.jawOpen || 0) + (Math.random()-0.5)*0.06);
+
+					return expr;
+				}
+
+				generateKeyframesForText(text){
+					const frames = [];
+					const vowels = new Set(['A','E','I','O','U','Á','É','Í','Ó','Ú','À','È','Ì','Ò','Ù','Ã','Õ','Â','Ê','Î','Ô','Û','Y']);
+					const tokens = text.toUpperCase().split('');
+					for (let i=0;i<tokens.length;i++){
+						const ch = tokens[i];
+						if (ch === ' '){ frames.push({ duration: 0.08 }); continue; }
+						if (vowels.has(ch)){
+							const frame = {};
+							if (this.params.has('jawOpen')) frame.jawOpen = 0.45 + Math.random()*0.15;
+							if (this.params.has('mouthOpen')) frame.mouthOpen = 0.5 + Math.random()*0.25;
+							frame.duration = 0.09 + Math.random()*0.06;
+							frames.push(frame);
+						} else {
+							const frame = {};
+							if (this.params.has('mouthFunnel')) frame.mouthFunnel = 0.25 + Math.random()*0.25;
+							if (this.params.has('mouthPucker')) frame.mouthPucker = 0.15 + Math.random()*0.25;
+							if (this.params.has('jawOpen')) frame.jawOpen = 0.08 + Math.random()*0.08;
+							frame.duration = 0.06 + Math.random()*0.06;
+							frames.push(frame);
+						}
+					}
+
+					// small smiles distributed
+					for (let i=0;i<frames.length;i+=Math.max(1,Math.floor(frames.length/6))){
+						if (this.params.has('mouthSmile_L') && this.params.has('mouthSmile_R')){
+							frames[i].mouthSmile_L = 0.18;
+							frames[i].mouthSmile_R = 0.18;
+						}
+					}
+
+					return frames;
+				}
+
+				// Generate keyframes based on syllables for more natural timing
+				generateSyllableKeyframesForText(text){
+					const frames = [];
+					const vowels = 'aeiouáéíóúàèìòùãõâêîôûyAEIOUÁÉÍÓÚÀÈÌÒÙÃÕÂÊÎÔÛY';
+					function syllabify(word){
+						const w = word.replace(/[^\p{L}\p{N}]/gu, '');
+						if (!w) return [];
+						const sylls = [];
+						let cur = '';
+						for (let i=0;i<w.length;i++){
+							const ch = w[i];
+							cur += ch;
+							if (vowels.indexOf(ch) !== -1){
+								const next = w[i+1] || '';
+								const next2 = w[i+2] || '';
+								if (next && vowels.indexOf(next)===-1 && next2 && vowels.indexOf(next2)!==-1){
+									sylls.push(cur);
+									cur = '';
+								} else if (next && vowels.indexOf(next)===-1 && !next2){
+									sylls.push(cur + next);
+									i++;
+									cur = '';
+								} else {
+									sylls.push(cur);
+									cur = '';
+								}
+							}
+						}
+						if (cur) sylls.push(cur);
+						return sylls;
+					}
+
+					const words = text.split(/\s+/);
+					for (let w of words){
+						if (!w) { frames.push({ duration: 0.06 }); continue; }
+						const sylls = syllabify(w);
+						if (!sylls.length) { frames.push({ duration: 0.06 }); continue; }
+						for (let s of sylls){
+								// If syllable starts with consonant(s) followed by vowel, generate a brief closure frame
+								const leadingConsonants = (s.match(/^[^aeiouáéíóúàèìòùãõâêîôûyAEIOUÁÉÍÓÚÀÈÌÒÙÃÕÂÊÎÔÛY]+/u) || [''])[0];
+								const hasVowel = /[aeiouáéíóúàèìòùãõâêîôûyAEIOUÁÉÍÓÚÀÈÌÒÙÃÕÂÊÎÔÛY]/u.test(s);
+								if (leadingConsonants && hasVowel) {
+									// closure frame from consonant
+									const closeVis = aggregateVisemeForWord(leadingConsonants);
+									// make closure quicker and a bit stronger for bilabials
+									if (/[bmp]/i.test(leadingConsonants)) {
+										closeVis.mouthPucker = Math.max(closeVis.mouthPucker || 0, 0.7);
+										closeVis.jawOpen = Math.min(closeVis.jawOpen || 0, 0.02);
+									} else {
+										closeVis.jawOpen = Math.min(closeVis.jawOpen || 0, 0.03);
+									}
+									frames.push(Object.assign({ duration: Math.max(0.035, Math.min(0.08, 0.035 * leadingConsonants.length)) }, closeVis));
+								}
+								// main vowel/cluster frame
+								const f = {};
+								// duration proportional to syllable length (base 0.08 per char) with less randomness
+								f.duration = Math.max(0.06, Math.min(0.5, 0.08 * s.replace(/[^\p{L}\p{N}]/gu,'').length * (0.9 + Math.random()*0.15)));
+								const vis = aggregateVisemeForWord(s);
+								// vowel-specific gentle tweaks
+								if (/[oóôõuúû]/i.test(s)){
+									vis.mouthPucker = Math.max(vis.mouthPucker || 0, 0.5);
+									vis.mouthFunnel = Math.max(vis.mouthFunnel || 0, 0.25);
+									vis.jawOpen = Math.max(vis.jawOpen || 0, 0.16);
+								} else if (/[aáâàã]/i.test(s)){
+									vis.jawOpen = Math.max(vis.jawOpen || 0, 0.55);
+									vis.mouthOpen = Math.max(vis.mouthOpen || 0, 0.55);
+								} else if (/[eéêè]/i.test(s)){
+									vis.mouthOpen = Math.max(vis.mouthOpen || 0, 0.32);
+									vis.mouthSmile_L = Math.max(vis.mouthSmile_L || 0, 0.08);
+									vis.mouthSmile_R = Math.max(vis.mouthSmile_R || 0, 0.08);
+								} else if (/[iíîìy]/i.test(s)){
+									vis.mouthOpen = Math.max(vis.mouthOpen || 0, 0.12);
+									vis.mouthPucker = Math.max(vis.mouthPucker || 0, 0.08);
+								}
+								for (const k in vis) f[k] = vis[k];
+								frames.push(f);
+						}
+						// small pause between words
+						frames.push({ duration: 0.04 });
+					}
+					return frames;
+				}
+			}
+			// Override: implement local versions (offline) for letter expressions and speech
+			window.executeLetterExpression = async function() {
+				const raw = document.getElementById('letterInput').value.trim().toUpperCase();
+				if (!raw) { updateStatus('⚠️ Digite pelo menos UMA letra!'); return; }
+
+				if (!influences || !allMorphParams.length) { updateStatus('⚠️ Aguarde o modelo carregar!'); return; }
+				if (!localFaceAI) { updateStatus('⚠️ IA local não inicializada ainda.'); return; }
+
+				// Parse input: accept commas, spaces, ' E ' (Portuguese) or 'AND'
+				const letters = (raw.replace(/\band\b/gi, ',').replace(/\be\b/gi, ',').replace(/[^A-Z,]/g, ',')
+					.split(',').map(s=>s.trim()).filter(Boolean).map(s=>s[0]));
+
+				if (!letters.length) { updateStatus('⚠️ Nenhuma letra válida encontrada.'); return; }
+
+				updateStatus(`🎭 Animando sequência: ${letters.join(', ')}`);
+				isAnimatingLetters = true;
+
+				try {
+					for (let i=0;i<letters.length && isAnimatingLetters;i++){
+						const L = letters[i];
+						// generate base expression and apply small random variation per-letter
+						let expr = localFaceAI.generateExpressionForLetter(L);
+						for (const k of Object.keys(expr)){
+							expr[k] = Math.max(0, Math.min(1, expr[k] * (0.85 + Math.random()*0.3) + (Math.random()-0.5)*0.06));
+						}
+						// cache unique per-letter+seed (simple)
+						letterExpressionCache[L+"#"+i] = expr;
+						// animate to expression
+						await animateToExpression(expr, 0.6, true);
+					}
+					// smooth return to rest
+					if (isAnimatingLetters) await animateToExpression({}, 0.5, true);
+					updateStatus('✅ Sequência concluída');
+				} catch (e) {
+					console.error('Erro sequência:', e);
+					updateStatus('❌ Erro: ' + e.message);
+				} finally {
+					isAnimatingLetters = false;
+				}
+			}
+
+			window.startSpeaking = async function() {
+				const text = document.getElementById('speechInput').value.trim();
+				if (!text) { updateStatus('⚠️ Digite uma frase para falar!'); return; }
+				if (!influences || !allMorphParams.length) { updateStatus('⚠️ Aguarde o modelo carregar!'); return; }
+				if (!localFaceAI) { updateStatus('⚠️ IA local não inicializada ainda.'); return; }
+
+				// Start/prepare speech + animation in parallel
+				stopSpeaking();
+				isSpeaking = true;
+				document.getElementById('stopSpeakBtn').style.display = 'inline-block';
+				updateStatus('🤖 Gerando fala (sintetizador) e animando...');
+
+				// Prepare and play speech using Web Speech API
+				// Use syllable-aware keyframes for better sync and compute desired total animation duration
+				const keyframes = localFaceAI.generateSyllableKeyframesForText(text);
+				const totalAnimDuration = keyframes.reduce((s,f)=>s + (f.duration||0.08), 0);
+				// Estimate default spoken duration at rate=1 (heuristic: 0.06s per character)
+				const estimatedDefaultSpeechDuration = Math.max(0.5, text.replace(/\s+/g,'').length * 0.06);
+				const utter = new SpeechSynthesisUtterance(text);
+				// Adjust rate so that spoken audio roughly matches animation duration
+				let desiredRate = estimatedDefaultSpeechDuration / Math.max(0.001, totalAnimDuration);
+				// clamp to reasonable range
+				desiredRate = Math.max(0.5, Math.min(2.0, desiredRate));
+				utter.rate = desiredRate;
+				utter.pitch = 1.0;
+				const sel = document.getElementById('voiceSelect');
+				if (sel && sel.value !== undefined && availableVoices[sel.value]) {
+					utter.voice = availableVoices[sel.value];
+				}
+				utter.onstart = function() {
+					utter._startTime = Date.now();
+				};
+
+				// small anticipation: prepare jaw before speaking
+				try { await animateToExpression({ jawOpen: 0.06 }, 0.06, false); } catch(e){}
+
+				// boundary events are supported in some browsers (Chrome/Edge)
+				utter.onboundary = function(evt) {
+					try {
+						const idx = evt.charIndex || 0;
+						const remaining = text.substr(idx);
+						const word = (remaining.split(/\s+/)[0] || '').replace(/[^\p{L}\p{N}]/gu, '');
+						if (word) {
+							const dur = Math.max(0.06, Math.min(0.6, (word.length * 0.06) / (utter.rate || 1)));
+							applyVisemeForWord(word, dur);
+						}
+					} catch (e) { console.warn('onboundary parse', e); }
+				};
+
+				utter.onend = function() {
+					// When voice finished, ensure flags are cleared
+					isSpeaking = false;
+					document.getElementById('stopSpeakBtn').style.display = 'none';
+					updateStatus('✅ Fala sintetizada concluída');
+				};
+
+				try {
+					speechSynthesis.speak(utter);
+				} catch (e) {
+					console.warn('speechSynthesis.speak erro:', e);
+				}
+
+				try {
+					// play syllable-aware keyframes generated earlier
+					for (let i=0;i<keyframes.length && isSpeaking;i++){
+						const frame = keyframes[i];
+						const duration = frame.duration || 0.12;
+						// remove duration before applying
+						delete frame.duration;
+						await animateToExpression(frame, duration, true);
+					}
+					if (isSpeaking) await animateToExpression({}, 0.45, true);
+					// If speech still playing, allow onend to clear state; otherwise stop
+					if (speechSynthesis.speaking) {
+						// let onend handle final state
+					} else {
+						isSpeaking = false;
+						document.getElementById('stopSpeakBtn').style.display = 'none';
+						updateStatus('✅ Fala concluída (local animação)');
+					}
+				} catch (e) {
+					console.error('Erro local IA:', e);
+					stopSpeaking();
+					updateStatus('❌ Erro: ' + e.message);
+				}
+			}
+
+			window.stopSpeaking = function() {
+				isSpeaking = false;
+				document.getElementById('stopSpeakBtn').style.display = 'none';
+				try {
+					if (speechSynthesis && speechSynthesis.speaking) speechSynthesis.cancel();
+				} catch (e) { console.warn('speech cancel error', e); }
+			}
+
+			function populateVoiceList(){
+				if (!window.speechSynthesis) return;
+				availableVoices = window.speechSynthesis.getVoices() || [];
+				const sel = document.getElementById('voiceSelect');
+				if (!sel) return;
+				sel.innerHTML = '';
+				availableVoices.forEach((v, i) => {
+					const opt = document.createElement('option');
+					opt.value = i;
+					opt.textContent = v.name + ' (' + v.lang + (v.default ? ' - default' : '') + ')';
+					sel.appendChild(opt);
+				});
+				if (availableVoices.length) updateStatus('🔊 Voz pronta: ' + availableVoices[0].name);
+			}
+
+			function testVoice(){
+				if (!window.speechSynthesis) { updateStatus('⚠️ speechSynthesis não disponível neste navegador'); return; }
+				const sel = document.getElementById('voiceSelect');
+				const txt = 'Teste de voz. Este é um exemplo de fala.';
+				const utter = new SpeechSynthesisUtterance(txt);
+				if (sel && sel.value !== undefined && availableVoices[sel.value]) utter.voice = availableVoices[sel.value];
+				speechSynthesis.cancel();
+				speechSynthesis.speak(utter);
+			}
+
+			// Heuristic viseme mapping: estimate viseme values from a word
+			function visemeForChar(ch){
+				ch = ch.toLowerCase();
+				// Less aggressive vowel shapes (reduced intensity)
+				if (/[oóôõuúû]/i.test(ch)) return { mouthPucker: 0.6, mouthFunnel: 0.35, jawOpen: 0.18 };
+				if (/[aáâàã]/i.test(ch)) return { jawOpen: 0.6, mouthOpen: 0.6 };
+				if (/[eéêè]/i.test(ch)) return { mouthOpen: 0.35, mouthSmile_L: 0.08, mouthSmile_R: 0.08 };
+				if (/[iíîìy]/i.test(ch)) return { mouthOpen: 0.12, mouthPucker: 0.08 };
+				const vowels = 'aeiouáéíóúàèìòùãõâêîôûy';
+				if (vowels.indexOf(ch) !== -1) return { jawOpen: 0.45, mouthOpen: 0.4 };
+				// bilabials: close/pucker but softer
+				if ('bmp'.indexOf(ch) !== -1) return { mouthPucker: 0.6, mouthFunnel: 0.18, jawOpen: 0.04 };
+				// labiodentals softer funnel
+				if ('fv'.indexOf(ch) !== -1) return { mouthFunnel: 0.35, jawOpen: 0.04 };
+				// sibilants and lingual consonants: subtle funnel/shape, small jaw
+				if ('sndrzl'.indexOf(ch) !== -1) return { mouthFunnel: 0.18, jawOpen: 0.06 };
+				// plosives/velars: small jaw movement
+				if ('tdkgbx'.indexOf(ch) !== -1) return { jawOpen: 0.12 };
+				if ('qw'.indexOf(ch) !== -1) return { mouthPucker: 0.3, jawOpen: 0.05 };
+				// default small mouth movement
+				return { jawOpen: 0.08 };
+			}
+
+			function aggregateVisemeForWord(word){
+				const accum = {};
+				let count = 0;
+				for (let i=0;i<word.length;i++){
+					const ch = word[i];
+					if (!ch.match(/[\p{L}\p{N}]/u)) continue;
+					const v = visemeForChar(ch);
+					for (const k in v){
+						accum[k] = Math.max(accum[k] || 0, v[k]);
+					}
+					count++;
+				}
+				// small smile tendency
+				if (word.length > 2 && /[aeiouáéíóúàèìòùãõâêîôûy]/i.test(word)){
+					accum.mouthSmile_L = Math.max(accum.mouthSmile_L || 0, 0.12);
+					accum.mouthSmile_R = Math.max(accum.mouthSmile_R || 0, 0.12);
+				}
+				// Apply a mild dampening to avoid exaggerated shapes
+				const damp = 0.72;
+				for (const k in accum){
+					// keep smile values subtle
+					if (k === 'mouthSmile_L' || k === 'mouthSmile_R') accum[k] = Math.min(0.18, accum[k] * 0.9);
+					else accum[k] = Math.max(0, Math.min(1, accum[k] * damp));
+				}
+				return accum;
+			}
+
+			// Apply a viseme (set of morph targets) over a short duration
+			function applyVisemeForWord(word, duration){
+				if (!influences || !localFaceAI) return;
+				const vis = aggregateVisemeForWord(word);
+				// slightly randomize intensity for naturalness
+				for (const k in vis) vis[k] = Math.max(0, Math.min(1, vis[k] * (0.85 + Math.random()*0.3)));
+				// animate to viseme and then slightly relax
+				(async function(){
+					await animateToExpression(vis, duration * 0.95, true);
+					if (isSpeaking) await animateToExpression({}, Math.max(0.04, duration * 0.3), true);
+				})();
+			}
+
+			window.resetFace = function() {
+				if (!influences) return;
+				// Stop any ongoing animations
+				isAnimatingLetters = false;
+				isSpeaking = false;
+				animateToExpression({}, 0.8);
+				updateStatus('🔄 Face resetada');
+			}
+
+			function animateToExpression(target, duration, isAsync = false) {
+				return new Promise((resolve) => {
+					if (!influences) {
+						resolve();
+						return;
+					}
+
+					if (currentAnimation && !isAsync) {
+						cancelAnimationFrame(currentAnimation);
+					}
+
+					const start = {};
+					for (let i = 0; i < influences.length; i++) {
+						start[i] = influences[i];
+					}
+
+					const startTime = Date.now();
+                    
+					function anim() {
+						const elapsed = (Date.now() - startTime) / 1000;
+						const effectiveDuration = Math.max(0.001, (duration || 0.001) * (typeof animationDurationScale === 'number' ? animationDurationScale : 1));
+						const progress = Math.min(elapsed / effectiveDuration, 1);
+						
+						// Easing suave
+						const eased = progress < 0.5 
+							? 2 * progress * progress 
+							: 1 - Math.pow(-2 * progress + 2, 2) / 2;
+
+						for (let i = 0; i < influences.length; i++) {
+							const targetVal = getTargetValue(i, target);
+							influences[i] = start[i] + (targetVal - start[i]) * eased;
+						}
+
+						if (progress < 1 && (isAsync ? (isSpeaking || isAnimatingLetters) : true)) {
+							currentAnimation = requestAnimationFrame(anim);
+						} else {
+							resolve();
+						}
+					}
+					
+					anim();
+				});
+			}
+
+			function getTargetValue(index, expression) {
+				const param = allMorphParams.find(p => p.index === index);
+				if (!param) return 0;
+				return expression[param.name] || 0;
+			}
+
+		</script>
+	</body>
+</html>
