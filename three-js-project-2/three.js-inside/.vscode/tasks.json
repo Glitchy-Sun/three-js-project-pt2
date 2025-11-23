@@ -1,0 +1,31 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "npm",
+			"script": "dev",
+			"path": "three.js-master/examples",
+			"problemMatcher": [],
+			"label": "npm: dev - Créditos",
+			"detail": "node utils/build/dev.js && servez -p 8080"
+		},
+		{
+			"type": "npm",
+			"script": "build",
+			"path": "three.js-master/examples",
+			"group": "build",
+			"problemMatcher": [],
+			"label": "npm: build - three.js-master",
+			"detail": "rollup -c utils/build/rollup.config.js"
+		},
+		{
+			"type": "npm",
+			"script": "build-docs",
+			"path": "three.js-master/examples",
+			"group": "build",
+			"problemMatcher": [],
+			"label": "npm: build-docs - three.js-master",
+			"detail": "jsdoc -c utils/docs/jsdoc.config.json"
+		}
+	]
+}
