@@ -4,15 +4,15 @@
 		{
 			"type": "npm",
 			"script": "dev",
-			"path": "three.js-master/examples",
+			"path": "three.js-master",
 			"problemMatcher": [],
-			"label": "npm: dev - Créditos",
+			"label": "npm: dev - three.js-master",
 			"detail": "node utils/build/dev.js && servez -p 8080"
 		},
 		{
 			"type": "npm",
 			"script": "build",
-			"path": "three.js-master/examples",
+			"path": "three.js-master",
 			"group": "build",
 			"problemMatcher": [],
 			"label": "npm: build - three.js-master",
@@ -21,11 +21,20 @@
 		{
 			"type": "npm",
 			"script": "build-docs",
-			"path": "three.js-master/examples",
+			"path": "three.js-master",
 			"group": "build",
 			"problemMatcher": [],
 			"label": "npm: build-docs - three.js-master",
 			"detail": "jsdoc -c utils/docs/jsdoc.config.json"
+		},
+		{
+			"type": "npm",
+			"script": "install",
+			"path": "three.js-master",
+			"group": "none",
+			"problemMatcher": [],
+			"label": "npm: install - three.js-master",
+			"detail": "install dependencies from package"
 		}
 	]
 }
