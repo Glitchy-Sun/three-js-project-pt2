@@ -54,28 +54,10 @@ Este projeto implementa um sistema de animação facial que permite:
    npm install three
    ```
 
-3. **Inicie um servidor local**
-   ```bash
-   npm start
-   ```
-   
-   Ou use uma alternativa simples:
-   ```bash
-   # Com Python 3
-   python -m http.server 8000
-   
-   # Com Python 2
-   python -m SimpleHTTPServer 8000
-   
-   # Com Node.js (http-server)
-   npx http-server
-   ```
-
-4. **Acesse no navegador**
-   ```
-   http://localhost:8000/Launcher.html
-   ```
-
+3. **Rode o HTML de Começar_Aqui_e_Créditos**
+ 
+4. **Acesse o LAUNCHER na parte de baixo do HTML acima.**
+5. 
 ### Opção 2: Setup com npm start (Recomendado)
 
 1. **Crie um arquivo `package.json`** na raiz do projeto:
@@ -84,10 +66,10 @@ Este projeto implementa um sistema de animação facial que permite:
      "name": "three-js-facial-animation",
      "version": "1.0.0",
      "description": "AI Facial Animation with Three.js WebGPU",
-     "main": "Launcher.html",
+     "main": "COMEÇAR_AQUI_e_Créditos.html",
      "scripts": {
        "start": "npx http-server -p 8000 -c-1",
-       "dev": "npx http-server -p 8000 -o Launcher.html"
+       "dev": "npx http-server -p 8000 -o COMEÇAR_AQUI_e_Começar.html"
      },
      "dependencies": {
        "three": "^r128"
@@ -105,10 +87,11 @@ Este projeto implementa um sistema de animação facial que permite:
    npm start
    ```
 
-### Arquitetura de Pastas
+### Arquitetura de como as Pastas têm que ficar
 
 ```
 projeto/
+COMEÇAR_AQUI_e_Créditos.html
 ├── Launcher.html                    # Hub principal de seleção
 ├── dever_do_túlio.html              # Parte 1: Expressões básicas
 ├── dever_do_túlioPT1.html           # Parte 2: Com síntese de voz
@@ -138,7 +121,7 @@ projeto/
 
 ### 1. Iniciar a Aplicação
 
-Abra `Launcher.html` em seu navegador. Você verá dois projetos disponíveis:
+Abra `COMEÇAR_AQUI_e_Créditos.html` em seu navegador. Você verá dois projetos disponíveis:
 - **Projeto 1**: Animação básica (Letra → Expressão)
 - **Projeto 2**: Animação avançada (Frase → Fala + Expressão sincronizada)
 
