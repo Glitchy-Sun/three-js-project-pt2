@@ -331,6 +331,7 @@
         <div class="actions">
             <button class="btn-launch" onclick="launchProjects()">▶️ Executar Sequência</button>
             <button class="btn-reset" onclick="resetSelection()">🔄 Limpar Seleção</button>
+            <button class="btn-launch" onclick="openCredits()" title="Abrir página de créditos">📜 Créditos</button>
         </div>
 
         <div class="status-message" id="statusMessage"></div>
@@ -435,6 +436,11 @@
             const msg = document.getElementById('statusMessage');
             msg.className = 'status-message';
             msg.textContent = '';
+        }
+
+        function openCredits(){
+            // Navigate to the credits page placed at project root
+            window.location.href = '../../COMEÇAR_AQUI_e_Créditos.html';
         }
 
         updateQueue();
